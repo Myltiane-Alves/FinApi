@@ -1,148 +1,131 @@
-const { request } = require("express");
 const express = require("express");
-const { v4: uuidv4 } = require("uuid")
+const cors = require("cors");
+
+const { v4: uuidv4 } = require("uuid");
+
 const app = express();
 
-const customers = [];
-
-// Middleware
-function verifyIfExistsAccountCPF(request, response, next) {
-    const { cpf } = request.headers;
-
-    const customer = customers.find(customer => customer.cpf === cpf);
-
-    if (!customer) {
-        return response.status(400).json({ error:  "Customer not found"});
-    }
-
-    request.customer = customer;
-
-    return next();
-}
-
-function getBalance(statement) {
-    const balance = statement.reduce((acc, operation) => {
-       if (operation.type === 'credit') {
-           return acc + operation.amount;
-       } else {
-           return acc - operation.amount;
-       } 
-    },0);
-
-    return balance;
-}
-
+app.use(cors());
 app.use(express.json());
 
-app.post("/account", (request, response) => {
-    const { cpf, name }= request.body;
+const users = [];
 
-    const customerAlreadExists = customers.some(
-        (customer) => customer.cpf === cpf
-    );
+function checksExistsUserAccount(request, response, next) {
+  const { username } = request.headers;
 
-    if(customerAlreadExists) {
-        return response.status(400).json({ error: 'Customer already exists"'})
-    }
-    
-    customers.push({
-        cpf,
-        name,
-        id: uuidv4(),
-        statement: [],
-    });
+  const user = users.find((user) => user.username === username);
 
-    return response.status(201).send()
+  if (!user) {
+    return response.status(404).json({ error: "User not found" });
+  }
+
+  request.username = user;
+
+  return next();
+}
+
+function checksExistsTodoUser(request, response, next) {
+  const { id } = request.params;
+  const { username } = request;
+
+  const todos = username.todos;
+
+  const todo = todos.find((todo) => todo.id === id);
+
+  if (!todo) {
+    return response.status(404).send({ error: "todo not found" });
+  }
+
+  request.todo = todo;
+
+  return next();
+}
+
+app.post("/users", (request, response) => {
+  const { name, username } = request.body;
+
+  const userAlreadyExists = users.some((user) => user.username === username);
+
+  if (userAlreadyExists) {
+    return response.status(400).json({ error: "User already exists" });
+  }
+
+  const user = {
+    id: uuidv4(),
+    name,
+    username,
+    todos: [],
+  };
+
+  users.push(user);
+
+  return response.status(201).json(user);
 });
 
-app.get("/statement", verifyIfExistsAccountCPF, (request, response) => {
-    const { customer } = request;
-
-    return response.json(customer.statement);
-})
-
-app.post("/deposit", verifyIfExistsAccountCPF, (request, response) => {
-    const { description, amount} = request.body;
-
-    const { customer } = request;
-
-    const statementOperation = {
-        description,
-        amount,
-        created_at: new Date(),
-        type: 'credit'
-    }
-
-    customer.statement.push(statementOperation);
-
-    return response.status(201).send();
+app.get("/todos", checksExistsUserAccount, (request, response) => {
+  const { username } = request;
+  return response.json(username.todos);
 });
 
-app.post("withdraw",verifyIfExistsAccountCPF, (request, response) => {
-    const { amount } = request.body;
-    const { customer } = request;
+app.post("/todos", checksExistsUserAccount, (request, response) => {
+  const { username } = request;
+  const { title, deadline } = request.body;
 
-    const balance = getBalance(customer.statement);
+  const todo = {
+    id: uuidv4(),
+    title,
+    done: false,
+    deadline: new Date(deadline),
+    created_at: new Date(),
+  };
 
-    if(balance < amount) {
-        return response.status(400).json({error: "Insuficient founds!"})
-    }
+  username.todos.push(todo);
 
-    const statementOperation = {
-        amount,
-        created_at: new Date(),
-        type: 'debit'
-    };
-
-    customer.statement.push(statementOperation);
-
-    return response.status(201).send();
+  return response.status(201).json(todo);
 });
 
-app.get("/statement/date", verifyIfExistsAccountCPF, (request, response) => {
-    const { customer } = request;
-    const { date } = request.query;
+app.put(
+  "/todos/:id",
+  checksExistsUserAccount,
+  checksExistsTodoUser,
+  (request, response) => {
+    const { todo } = request;
+    const { title, deadline } = request.body;
 
-    const dateFormat = new Date(date + " 00:00");
+    todo.title = title;
+    todo.deadline = new Date(deadline);
 
-    const statement = customer.statement.filter((statement) => 
-        statement.created_at.toDateString() ===
-        (dateFormat).toDateString()
-    );
+    return response.status(201).json(todo);
+  }
+);
 
-    return response.json(customer.statement);
+app.patch(
+  "/todos/:id/done",
+  checksExistsUserAccount,
+  checksExistsTodoUser,
+  (request, response) => {
+    const { todo } = request;
+
+    todo.done = !todo.done;
+
+    return response.status(201).json(todo);
+  }
+);
+
+app.delete("/todos/:id", checksExistsUserAccount, (request, response) => {
+  const { username } = request;
+  const { id } = request.params;
+
+  const todoExists = username.todos.some((todo) => todo.id === id);
+
+  if (!todoExists) {
+    return response.status(404).json({ error: "Todo not exists" });
+  }
+
+  const updatedTodos = username.todos.filter((todo) => todo.id !== id);
+
+  username.todos = updatedTodos;
+  return response.status(204).send();
 });
 
-app.put("/account", verifyIfExistsAccountCPF, (request, response) => {
-    const { name } = request.body;
-    const { customer } = request;
-
-    customer.name = name;
-
-    return response.status(201).send();
-});
-
-app.get("/account", verifyIfExistsAccountCPF, (request, response) => {
-    const { customer } = request;
-
-    return response.json(customer);
-});
-
-app.delete("/account", verifyIfExistsAccountCPF, (request, response) => {
-    const { customer } = request;
-
-    // splice
-    customers.splice(customer, 1);
-
-    return response.status(200).json(customers);
-});
-
-app.get("/balance", verifyIfExistsAccountCPF, (request, response) => {
-    const { customer } = request;
-    
-    const balance = getBalance(customer.statement);
-
-    return response.json(balance);
-});
-
-app.listen(3333)
+module.exports = app;
